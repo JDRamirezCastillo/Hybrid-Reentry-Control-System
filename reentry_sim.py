@@ -7,6 +7,9 @@ Author: Juan David Ramirez-Castillo
 License: Apache 2.0
 Validation: SGC Australia 2025 / IAC 2026 Antalya
 """
+import time
+import numpy as np
+
 Python-centric MIL + Monte Carlo implementation aligned with:
 
 - 3-DOF re-entry dynamics
@@ -681,16 +684,44 @@ class MILSimulator:
 
         self.controller.reset()
 
-        while t <= scenario.tf:
-            s = State3DOF.from_vector(x)
-            ref = scenario.ref_profile(t)
-            u = self.controller.step(t, s, ref)
-            x = dyn.rk4_step(t, x, u, scenario.dt)
+        # --- STEP A: Initialize the storage for your 3.2ms benchmark ---
+step_latencies = [] 
 
-            times.append(t)
-            states.append(x.copy())
-            controls.append(np.array([u.alpha, u.bank], dtype=float))
-            t += scenario.dt
+while t <= scenario.tf:
+    # --- STEP B: Start the high-precision clock for this specific iteration ---
+    start_step = time.perf_counter() # Use perf_counter for nanosecond accuracy
+
+    s = State3DOF.from_vector(x)
+    ref = scenario.ref_profile(t)
+    
+    # This is the "Think" phase (MPC/CNN-LSTM) [cite: 8, 13]
+    u = self.controller.step(t, s, ref) 
+    
+    # This is the "Act" phase (Physics/RK4) 
+    x = dyn.rk4_step(t, x, u, scenario.dt)
+
+    # --- STEP C: Stop the clock and save the duration ---
+    end_step = time.perf_counter()
+    step_latencies.append(end_step - start_step)
+
+    # Your standard logging remains the same
+    times.append(t)
+    states.append(x.copy())
+    controls.append(np.array([u.alpha, u.bank], dtype=float))
+    t += scenario.dt
+
+# --- STEP D: Calculate the results for your IAF Technical Update ---
+if step_latencies:
+    total_compute_time = sum(step_latencies)
+    met_ms = (total_compute_time / len(step_latencies)) * 1000
+    
+    print("\n" + "="*45)
+    print("      IAC 2026 BENCHMARK REPORT (ID: 107322)    ")
+    print("="*45)
+    print(f"Mean Execution Time (MET):   {met_ms:.4f} ms")
+    print(f"Total Computation (Sim):     {total_compute_time:.4f} s")
+    print(f"Validation Scenarios:        {len(step_latencies)} steps")
+    print("="*45)
 
         times_arr = np.array(times)
         states_arr = np.vstack(states)
