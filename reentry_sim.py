@@ -1,7 +1,12 @@
 """
 Hybrid LEO Re-entry Modeling and Control
 =======================================
-
+"""
+Hybrid Aerothermodynamic Control System v1.0.0
+Author: Juan David Ramirez-Castillo
+License: Apache 2.0
+Validation: SGC Australia 2025 / IAC 2026 Antalya
+"""
 Python-centric MIL + Monte Carlo implementation aligned with:
 
 - 3-DOF re-entry dynamics
