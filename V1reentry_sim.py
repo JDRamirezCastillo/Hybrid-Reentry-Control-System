@@ -1,17 +1,12 @@
 """
 Hybrid LEO Re-entry Modeling and Control
 =======================================
-"""
 Hybrid Aerothermodynamic Control System v1.0.0
 Author: Juan David Ramirez-Castillo
 License: Apache 2.0
 Validation: SGC Australia 2025 / IAC 2026 Antalya
-"""
-import time
-import numpy as np
 
 Python-centric MIL + Monte Carlo implementation aligned with:
-
 - 3-DOF re-entry dynamics
 - Exponential atmosphere, Kn/Ma/Re flow-regime classification
 - POD ROM (100 modes)
@@ -30,6 +25,9 @@ All physical parameters are configurable via Config.
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Any, Protocol, Tuple, List
+import numpy as np
+
+import time
 import numpy as np
 
 # Optional imports for MPC / ML; you can comment these out if not installed
@@ -681,58 +679,42 @@ class MILSimulator:
         times: List[float] = []
         states: List[np.ndarray] = []
         controls: List[np.ndarray] = []
+        step_latencies = [] 
 
         self.controller.reset()
 
-        # --- STEP A: Initialize the storage for your 3.2ms benchmark ---
-step_latencies = [] 
+        while t <= scenario.tf:
+            start_step = time.perf_counter()
+            s = State3DOF.from_vector(x)
+            ref = scenario.ref_profile(t)
+            u = self.controller.step(t, s, ref) 
+            x = dyn.rk4_step(t, x, u, scenario.dt)
+            end_step = time.perf_counter()
+            
+            step_latencies.append(end_step - start_step)
+            times.append(t)
+            states.append(x.copy())
+            controls.append(np.array([u.alpha, u.bank], dtype=float))
+            t += scenario.dt
 
-while t <= scenario.tf:
-    # --- STEP B: Start the high-precision clock for this specific iteration ---
-    start_step = time.perf_counter() # Use perf_counter for nanosecond accuracy
-
-    s = State3DOF.from_vector(x)
-    ref = scenario.ref_profile(t)
-    
-    # This is the "Think" phase (MPC/CNN-LSTM) [cite: 8, 13]
-    u = self.controller.step(t, s, ref) 
-    
-    # This is the "Act" phase (Physics/RK4) 
-    x = dyn.rk4_step(t, x, u, scenario.dt)
-
-    # --- STEP C: Stop the clock and save the duration ---
-    end_step = time.perf_counter()
-    step_latencies.append(end_step - start_step)
-
-    # Your standard logging remains the same
-    times.append(t)
-    states.append(x.copy())
-    controls.append(np.array([u.alpha, u.bank], dtype=float))
-    t += scenario.dt
-
-# --- STEP D: Calculate the results for your IAF Technical Update ---
-if step_latencies:
-    total_compute_time = sum(step_latencies)
-    met_ms = (total_compute_time / len(step_latencies)) * 1000
-    
-    print("\n" + "="*45)
-    print("      IAC 2026 BENCHMARK REPORT (ID: 107322)    ")
-    print("="*45)
-    print(f"Mean Execution Time (MET):   {met_ms:.4f} ms")
-    print(f"Total Computation (Sim):     {total_compute_time:.4f} s")
-    print(f"Validation Scenarios:        {len(step_latencies)} steps")
-    print("="*45)
+        # --- EVERYTHING BELOW MUST BE ALIGNED WITH THE 'WHILE' ABOVE ---
+        if step_latencies:
+            total_compute_time = sum(step_latencies)
+            met_ms = (total_compute_time / len(step_latencies)) * 1000
+            print("\n" + "="*45)
+            print("     IAC 2026 BENCHMARK REPORT (ID: 107322)    ")
+            print("="*45)
+            print(f"Mean Execution Time (MET):   {met_ms:.4f} ms")
+            print("="*45)
 
         times_arr = np.array(times)
         states_arr = np.vstack(states)
         controls_arr = np.vstack(controls)
-
         gamma = states_arr[:, 2]
         gamma_ref = np.array([scenario.ref_profile(ti)["gamma_ref"] for ti in times_arr])
         rms_gamma = rms_error(gamma, gamma_ref)
 
-        metrics = {"rms_gamma": rms_gamma}
-        return MILResult(times=times_arr, states=states_arr, controls=controls_arr, metrics=metrics)
+        return MILResult(times=times_arr, states=states_arr, controls=controls_arr, metrics={"rms_gamma": rms_gamma})
 
 
 # ============================================================================
@@ -896,3 +878,5 @@ if __name__ == "__main__":
     mil = MILSimulator(supervisor, env, atmosphere)
     result = mil.run(scenario)
     print("RMS gamma error [rad]:", result.metrics["rms_gamma"])
+
+
